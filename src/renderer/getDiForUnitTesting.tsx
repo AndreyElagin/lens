@@ -3,8 +3,7 @@
  * Licensed under MIT License. See LICENSE in root directory for more information.
  */
 
-import glob from "glob";
-import { memoize, noop, chunk } from "lodash/fp";
+import { noop, chunk } from "lodash/fp";
 import type { DiContainer, Injectable } from "@ogre-tools/injectable";
 import {
   createContainer,
@@ -19,9 +18,6 @@ import extensionsStoreInjectable from "../extensions/extensions-store/extensions
 import type { ExtensionsStore } from "../extensions/extensions-store/extensions-store";
 import fileSystemProvisionerStoreInjectable from "../extensions/extension-loader/file-system-provisioner-store/file-system-provisioner-store.injectable";
 import type { FileSystemProvisionerStore } from "../extensions/extension-loader/file-system-provisioner-store/file-system-provisioner-store";
-import clusterStoreInjectable from "../common/cluster-store/cluster-store.injectable";
-import type { ClusterStore } from "../common/cluster-store/cluster-store";
-import type { Cluster } from "../common/cluster/cluster";
 import userStoreInjectable from "../common/user-store/user-store.injectable";
 import type { UserStore } from "../common/user-store";
 import getAbsolutePathInjectable from "../common/path/get-absolute-path.injectable";
@@ -41,8 +37,7 @@ import type { IpcRenderer } from "electron";
 import setupOnApiErrorListenersInjectable from "./api/setup-on-api-errors.injectable";
 import { observable, computed } from "mobx";
 import defaultShellInjectable from "./components/+preferences/default-shell.injectable";
-import appVersionInjectable from "../common/get-configuration-file-model/app-version/app-version.injectable";
-import provideInitialValuesForSyncBoxesInjectable from "./utils/sync-box/provide-initial-values-for-sync-boxes.injectable";
+import appVersionInjectable from "../common/vars/app-version.injectable";
 import requestAnimationFrameInjectable from "./components/animate/request-animation-frame.injectable";
 import getRandomIdInjectable from "../common/utils/get-random-id.injectable";
 import getFilePathsInjectable from "./components/+preferences/kubernetes/helm-charts/adding-of-custom-helm-repository/helm-file-input/get-file-paths.injectable";
@@ -73,6 +68,7 @@ import forceUpdateModalRootFrameComponentInjectable from "./application-update/f
 import legacyOnChannelListenInjectable from "./ipc/legacy-channel-listen.injectable";
 import getEntitySettingCommandsInjectable from "./components/command-palette/registered-commands/get-entity-setting-commands.injectable";
 import storageSaveDelayInjectable from "./utils/create-storage/storage-save-delay.injectable";
+import type { GlobalOverride } from "../common/test-utils/get-global-override";
 
 export const getDiForUnitTesting = (opts: { doGeneralOverrides?: boolean } = {}) => {
   const {
@@ -85,9 +81,9 @@ export const getDiForUnitTesting = (opts: { doGeneralOverrides?: boolean } = {})
 
   setLegacyGlobalDiForExtensionApi(di, Environments.renderer);
 
-  const filePaths = getInjectableFilePaths();
-
-  const injectables = filePaths.map(filePath => require(filePath).default);
+  const injectables: Injectable<any, any, any>[] = (global as any).rendererInjectablePaths.map(
+    (filePath: string) => require(filePath).default,
+  );
 
   chunk(100)(injectables).forEach(chunkInjectables => {
     di.register(...chunkInjectables);
@@ -96,6 +92,14 @@ export const getDiForUnitTesting = (opts: { doGeneralOverrides?: boolean } = {})
   di.preventSideEffects();
 
   if (doGeneralOverrides) {
+    const globalOverrides: GlobalOverride[] = (global as any).rendererGlobalOverridePaths.map(
+      (filePath: string) => require(filePath).default,
+    );
+
+    globalOverrides.forEach(globalOverride => {
+      di.override(globalOverride.injectable, globalOverride.overridingInstantiate);
+    });
+
     di.override(getRandomIdInjectable, () => () => "some-irrelevant-random-id");
     di.override(platformInjectable, () => "darwin");
     di.override(startTopbarStateSyncInjectable, () => ({
@@ -181,12 +185,8 @@ export const getDiForUnitTesting = (opts: { doGeneralOverrides?: boolean } = {})
 
     di.override(fileSystemProvisionerStoreInjectable, () => ({}) as FileSystemProvisionerStore);
 
-    // eslint-disable-next-line unused-imports/no-unused-vars-ts
-    di.override(clusterStoreInjectable, () => ({ getById: (id): Cluster => ({}) as Cluster }) as ClusterStore);
-
     di.override(setupSystemCaInjectable, () => ({ run: () => {} }));
     di.override(setupOnApiErrorListenersInjectable, () => ({ run: () => {} }));
-    di.override(provideInitialValuesForSyncBoxesInjectable, () => ({ run: () => {} }));
 
     di.override(defaultShellInjectable, () => "some-default-shell");
 
@@ -221,12 +221,6 @@ export const getDiForUnitTesting = (opts: { doGeneralOverrides?: boolean } = {})
 
   return di;
 };
-
-const getInjectableFilePaths = memoize(() => [
-  ...glob.sync("./**/*.injectable.{ts,tsx}", { cwd: __dirname }),
-  ...glob.sync("../common/**/*.injectable.{ts,tsx}", { cwd: __dirname }),
-  ...glob.sync("../extensions/**/*.injectable.{ts,tsx}", { cwd: __dirname }),
-]);
 
 const overrideFunctionalInjectables = (di: DiContainer, injectables: Injectable<any, any, any>[]) => {
   injectables.forEach(injectable => {
